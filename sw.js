@@ -1,9 +1,10 @@
 /* Samba Inventory: keeps the app's own files on the device, so it opens without internet (the data has its own
    copy on the device, see sync.js). Each build gets its own cache, filled in one go, so the files of two versions
    never mix; the old cache is removed once the new one is complete. */
-const V = 'samba-app-a8f7543ef14d';
+const V = 'samba-app-f5346dfc91b8';
 const FILES = ["./", "index.html", "loader.js", "config.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "apple-touch-icon.png", "vendor/supabase.js", "vendor/xlsx.full.min.js", "vendor/exceljs.min.js", "vendor/html2canvas.min.js", "vendor/jspdf.umd.min.js"];
-self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
+// fetched fresh (not from the browser's short-term cache), so a new version never keeps an old file
+self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(FILES.map(f => new Request(f, {cache: 'reload'})))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('samba-app-') && k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });

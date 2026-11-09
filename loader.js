@@ -71,7 +71,7 @@ function showLogin(msg) {
   if (started) return;
   $('#app').innerHTML = loginHTML(msg);
   const f = $('#loginForm'); f.addEventListener('submit', onLogin);
-  const pin = $('#lg_pin'); pin.addEventListener('input', () => { const v = toLatin(pin.value).replace(/\D/g, ''); if (v !== pin.value) pin.value = v; });
+  const pin = $('#lg_pin'); pin.addEventListener('input', () => { const v = toLatin(pin.value); if (v !== pin.value) pin.value = v; });
   const u = $('#lg_user'); if (u && !u.disabled && !('ontouchstart' in window)) u.focus();
 }
 function err(m) { const e = $('#formErr'); if (e) { e.textContent = m; e.hidden = false; } }
@@ -106,14 +106,44 @@ async function onLogin(e) {
     const w = await sb.rpc('whoami');
     if (w.error) throw w.error;
     if (!w.data) { await sb.auth.signOut({scope: 'local'}).catch(() => {}); setBusy(false); return err('هذا الحساب موقوف. راجع المدير.'); }
-    setBusy(true, 'عم ينزّل البرنامج…');
-    const b = await fetchBundle();
-    if (!b) { setBusy(false); return err('البرنامج مش جاهز على السيرفر لسا. جرّب بعد شوي.'); }
-    fails = 0; LOADER.justLoggedIn = true; run(b);
+    fails = 0;
+    // in the app a PIN is English digits only (6 to 12); a first password set outside the app (the owner's, in
+    // Supabase) may have letters: then a PIN is chosen now, before the program opens
+    if (!/^\d{6,12}$/.test(pin)) { setBusy(false); return showNewPin(); }
+    await openProgram();
   } catch (x) {
     setBusy(false);
     err(isNet(x) || /timeout/.test(String(x && x.message)) ? 'ما في اتصال بالإنترنت. أول دخول على هالجهاز بدّه إنترنت.' : 'ما زبط الدخول. جرّب كمان مرة.');
   }
+}
+
+async function openProgram() {
+  setBusy(true, 'عم ينزّل البرنامج…');
+  try {
+    const b = await fetchBundle();
+    if (!b) { setBusy(false); return err('البرنامج مش جاهز على السيرفر لسا. جرّب بعد شوي.'); }
+    LOADER.justLoggedIn = true; run(b);
+  } catch (x) { setBusy(false); err(isNet(x) ? 'ما في اتصال بالإنترنت. جرّب كمان مرة.' : 'ما زبط تنزيل البرنامج. جرّب كمان مرة.'); }
+}
+function showNewPin(msg) {
+  $('#app').innerHTML = `<div class="login"><div class="panel lbox"><div class="brand"><b>Samba Inventory</b><span class="muted small">${FACTORY}</span></div>
+  <h1>اختار رقمك السري</h1><p class="muted small" style="margin:0 0 10px">كلمة السر الي دخلت فيها فيها أحرف. بالبرنامج الرقم السري أرقام إنجليزية بس، من 6 لـ 12 رقم. اختار رقمك الجديد، ومن هلأ ورايح بتدخل فيه.</p>
+  <form id="loginForm"><label>الرقم السري الجديد<input id="np_1" type="password" inputmode="numeric" dir="ltr" autocomplete="new-password"></label>
+  <label>أعد كتابة الرقم الجديد<input id="np_2" type="password" inputmode="numeric" dir="ltr" autocomplete="new-password"></label>
+  <div id="formErr" class="err" ${msg ? '' : 'hidden'}>${msg || ''}</div><button class="btn primary big">حفظ الرقم والدخول</button></form></div></div>`;
+  ['np_1', 'np_2'].forEach(id => { const x = $('#' + id); x.addEventListener('input', () => { const v = toLatin(x.value).replace(/\D/g, ''); if (v !== x.value) x.value = v; }); });
+  $('#loginForm').addEventListener('submit', async e => {
+    e.preventDefault(); if (busy) return;
+    const a = $('#np_1').value.trim(), b2 = $('#np_2').value.trim();
+    if (!/^\d{6,12}$/.test(a)) return err('الرقم السري أرقام إنجليزية بس، من 6 لـ 12 رقم.');
+    if (a !== b2) return err('الرقم الجديد والتأكيد مش متطابقين.');
+    setBusy(true, 'عم يحفظ…');
+    const r = await sb.auth.updateUser({password: a}).catch(x => ({error: x}));
+    if (r.error) { setBusy(false); return err(isNet(r.error) ? 'ما في اتصال بالإنترنت. جرّب كمان مرة.' : 'ما انحفظ الرقم: ' + String(r.error.message || r.error)); }
+    LOADER.pinChanged = true;
+    await openProgram();
+  });
+  $('#np_1').focus();
 }
 
 // ---------- start ----------
@@ -148,6 +178,7 @@ async function start() {
 const LOADER = window.LOADER = {
   version: null,
   justLoggedIn: false,
+  pinChanged: false,
   // the program calls this after logging out (or when the login ended): it leaves the device and the login screen comes back
   async signedOut() {
     try { await DB.del('bundle'); } catch (e) {}
