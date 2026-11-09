@@ -9,8 +9,11 @@
 'use strict';
 const CFG = window.SAMBA_CFG || {};
 const FACTORY = 'مصنع سامبا للصناعات البلاستيكية';
+// the owner's «forgot PIN» email link opens the app with a one-time login in the address
+const RECOVERY = /type=recovery/.test(location.hash);
+const LINK_BAD = /error_code=|error=access_denied/.test(location.hash);
 const sb = window.supabase.createClient(CFG.url, CFG.key, {
-  auth: {persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: 'samba-inv-auth'},
+  auth: {persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: 'samba-inv-auth'},
   realtime: {params: {eventsPerSecond: 100}}
 });
 window.SAMBA_SB = sb;   // the program uses this same connection (one login per page)
@@ -65,7 +68,7 @@ function loginHTML(msg) {
   <h1>تسجيل الدخول</h1><form id="loginForm" autocomplete="on"><label>اسم الدخول<input id="lg_user" dir="ltr" data-user autocomplete="username" autocapitalize="off" spellcheck="false" ${lock ? 'disabled' : ''}></label>
   <label>الرقم السري<input id="lg_pin" type="password" inputmode="numeric" data-keep0 dir="ltr" autocomplete="current-password" ${lock ? 'disabled' : ''}></label>
   <div id="formErr" class="err" ${m ? '' : 'hidden'}>${m}</div><button class="btn primary big" ${lock ? 'disabled' : ''}>دخول</button></form>
-  <p class="hint">نسيت رقمك السري؟ المدير بيعطيك رقم جديد.</p></div></div>`;
+  <p class="hint"><a href="#" id="lg_forgot">نسيت رقمك السري؟</a></p></div></div>`;
 }
 function showLogin(msg) {
   if (started) return;
@@ -73,6 +76,31 @@ function showLogin(msg) {
   const f = $('#loginForm'); f.addEventListener('submit', onLogin);
   const pin = $('#lg_pin'); pin.addEventListener('input', () => { const v = toLatin(pin.value); if (v !== pin.value) pin.value = v; });
   const u = $('#lg_user'); if (u && !u.disabled && !('ontouchstart' in window)) u.focus();
+  $('#lg_forgot').addEventListener('click', e => { e.preventDefault(); showForgot(); });
+}
+// employees get a new PIN from management; the owner gets an email link (only the owner's account has a real email)
+function showForgot(msg, ok) {
+  if (started) return;
+  $('#app').innerHTML = `<div class="login"><div class="panel lbox"><div class="brand"><b>Samba Inventory</b><span class="muted small">${FACTORY}</span></div>
+  <h1>نسيت رقمك السري؟</h1>
+  <p class="muted" style="margin:0 0 6px"><b>إذا إنت موظف:</b> المدير بيعطيك رقم جديد.</p>
+  <p class="muted" style="margin:0 0 10px"><b>إذا إنت المالك:</b> اكتب إيميلك، وبيوصلك عليه رابط بتختار منه رقم سري جديد.</p>
+  <form id="loginForm"><label>الإيميل<input id="fg_mail" type="email" dir="ltr" autocomplete="email" autocapitalize="off" spellcheck="false"></label>
+  ${ok ? `<div class="okbox small">${msg}</div>` : ''}<div id="formErr" class="err" ${msg && !ok ? '' : 'hidden'}>${msg && !ok ? msg : ''}</div>
+  <button class="btn primary big">ابعتلي الرابط</button></form>
+  <p class="hint"><a href="#" id="fg_back">رجوع لتسجيل الدخول</a></p></div></div>`;
+  $('#fg_back').addEventListener('click', e => { e.preventDefault(); showLogin(); });
+  $('#loginForm').addEventListener('submit', async e => {
+    e.preventDefault(); if (busy) return;
+    const em = $('#fg_mail').value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return err('اكتب إيميلك كامل وصح.');
+    setBusy(true, 'عم يبعت…');
+    const r = await sb.auth.resetPasswordForEmail(em, {redirectTo: location.origin + location.pathname}).catch(x => ({error: x}));
+    busy = false;
+    if (r.error) return showForgot(isNet(r.error) ? 'ما في اتصال بالإنترنت. جرّب كمان مرة.' : r.error.status === 429 ? 'انبعت رابط من شوي. استنى شوي وجرّب كمان مرة.' : 'ما زبط الإرسال: ' + String(r.error.message || r.error));
+    showForgot('إذا هاد إيميل المالك، وصلك هلأ رابط عليه. افتحه، وبيفتح البرنامج على شاشة بتختار فيها رقمك السري الجديد. إذا ما لقيته، شوف بالـ Junk أو Spam.', true);
+  });
+  $('#fg_mail').focus();
 }
 function err(m) { const e = $('#formErr'); if (e) { e.textContent = m; e.hidden = false; } }
 function setBusy(on, label) {
@@ -125,9 +153,11 @@ async function openProgram() {
     LOADER.justLoggedIn = true; run(b);
   } catch (x) { setBusy(false); err(isNet(x) ? 'ما في اتصال بالإنترنت. جرّب كمان مرة.' : 'ما زبط تنزيل البرنامج. جرّب كمان مرة.'); }
 }
-function showNewPin(msg) {
+function showNewPin(msg, why) {
+  const intro = why === 'recovery' ? 'فتحت رابط «نسيت رقمك السري». اختار رقمك السري الجديد: أرقام إنجليزية بس، من 6 لـ 12 رقم. ومن هلأ ورايح بتدخل فيه.'
+    : 'كلمة السر الي دخلت فيها فيها أحرف. بالبرنامج الرقم السري أرقام إنجليزية بس، من 6 لـ 12 رقم. اختار رقمك الجديد، ومن هلأ ورايح بتدخل فيه.';
   $('#app').innerHTML = `<div class="login"><div class="panel lbox"><div class="brand"><b>Samba Inventory</b><span class="muted small">${FACTORY}</span></div>
-  <h1>اختار رقمك السري</h1><p class="muted small" style="margin:0 0 10px">كلمة السر الي دخلت فيها فيها أحرف. بالبرنامج الرقم السري أرقام إنجليزية بس، من 6 لـ 12 رقم. اختار رقمك الجديد، ومن هلأ ورايح بتدخل فيه.</p>
+  <h1>اختار رقمك السري</h1><p class="muted small" style="margin:0 0 10px">${intro}</p>
   <form id="loginForm"><label>الرقم السري الجديد<input id="np_1" type="password" inputmode="numeric" dir="ltr" autocomplete="new-password"></label>
   <label>أعد كتابة الرقم الجديد<input id="np_2" type="password" inputmode="numeric" dir="ltr" autocomplete="new-password"></label>
   <div id="formErr" class="err" ${msg ? '' : 'hidden'}>${msg || ''}</div><button class="btn primary big">حفظ الرقم والدخول</button></form></div></div>`;
@@ -153,6 +183,9 @@ async function start() {
   let ses = null, netErr = false;
   try { const r = await sb.auth.getSession(); ses = r.data && r.data.session; if (r.error && isNet(r.error)) netErr = true; } catch (e) { netErr = true; }
   const last = LS.get('samba-inv-last');
+  if (RECOVERY || LINK_BAD) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+  if (RECOVERY && ses) return showNewPin('', 'recovery');
+  if ((RECOVERY || LINK_BAD) && !ses) { if (cached) await DB.del('bundle').catch(() => {}); return showLogin('الرابط انتهى أو انستعمل قبل. اطلب رابط جديد من «نسيت رقمك السري؟».'); }
   if (!ses) {
     // without internet the login can't be checked: the person did not log out, so carry on with what is on the device
     if (cached && last && (netErr || navigator.onLine === false)) return run(cached);
