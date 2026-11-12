@@ -106,27 +106,46 @@ function showLogin(msg) {
 // employees get a new PIN from management; the owner gets an email link (only the owner's account has a real email)
 function showForgot(msg, ok) {
   if (started) return;
+  const u0 = ((document.getElementById('lg_user') || document.getElementById('fg_user') || {}).value || '').trim();
+  const esc = v => String(v).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
   $('#app').innerHTML = `<div class="login"><div class="panel lbox"><div class="brand"><b>Samba Inventory</b><span class="muted small">${FACTORY}</span></div>
   <h1>نسيت رقمك السري؟</h1>
-  <p class="muted" style="margin:0 0 6px"><b>إذا إنت موظف:</b> المدير بيعطيك رقم جديد.</p>
-  <p class="muted" style="margin:0 0 10px"><b>إذا إنت المالك:</b> اكتب إيميلك، وبيوصلك عليه رابط بتختار منه رقم سري جديد.</p>
-  <form id="loginForm"><label>الإيميل<input id="fg_mail" type="email" dir="ltr" autocomplete="email" autocapitalize="off" spellcheck="false"></label>
   ${ok ? `<div class="okbox small">${msg}</div>` : ''}<div id="formErr" class="err" ${msg && !ok ? '' : 'hidden'}>${msg && !ok ? msg : ''}</div>
-  <button class="btn primary big">ابعتلي الرابط</button></form>
+  <form id="fgEmp"><p class="muted" style="margin:0 0 6px"><b>إذا إنت موظف:</b> اكتب اسم الدخول، وبيوصل طلبك للمدير يعطيك رقم سري جديد.</p>
+  <label>اسم الدخول<input id="fg_user" dir="ltr" autocomplete="username" autocapitalize="off" spellcheck="false" value="${esc(u0)}"></label>
+  <button class="btn primary big">ابعت الطلب للمدير</button></form>
+  <form id="fgOwner" style="margin-top:16px"><p class="muted" style="margin:0 0 6px"><b>إذا إنت المالك:</b> اكتب إيميلك، وبيوصلك عليه رابط بتختار منه رقم سري جديد.</p>
+  <label>الإيميل<input id="fg_mail" type="email" dir="ltr" autocomplete="email" autocapitalize="off" spellcheck="false"></label>
+  <button class="btn big">ابعتلي الرابط</button></form>
   <p class="hint"><a href="#" id="fg_back">رجوع لتسجيل الدخول</a></p></div></div>`;
+  const hold = on => { busy = on; document.querySelectorAll('#app input, #app button').forEach(x => { x.disabled = on; }); };
   $('#fg_back').addEventListener('click', e => { e.preventDefault(); showLogin(); });
-  $('#loginForm').addEventListener('submit', async e => {
+  // an employee: a request to management (public.pin_forgot); the same answer whether the name exists or not
+  $('#fgEmp').addEventListener('submit', async e => {
+    e.preventDefault(); if (busy) return;
+    const un = $('#fg_user').value.trim().toLowerCase();
+    if (AR_ANY.test(un)) return err(AR_BOX);
+    if (!un) return err('اكتب اسم الدخول.');
+    hold(true);
+    // rpc() gives a PostgREST builder: it has then(), not catch()
+    const r = await sb.rpc('pin_forgot', {login: un}).then(x => x, x => ({error: x}));
+    busy = false;
+    if (r.error) return showForgot(isNet(r.error) ? 'ما في اتصال بالإنترنت. جرّب كمان مرة.' : 'ما انبعت الطلب. جرّب كمان مرة.');
+    showForgot('وصل طلبك للمدير. هو بيعطيك رقم سري جديد، وبتدخل فيه.', true);
+  });
+  // the owner: the email link (Supabase)
+  $('#fgOwner').addEventListener('submit', async e => {
     e.preventDefault(); if (busy) return;
     const em = $('#fg_mail').value.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return err('اكتب إيميلك كامل وصح.');
-    setBusy(true, 'عم يبعت…');
+    hold(true);
     const r = await sb.auth.resetPasswordForEmail(em, {redirectTo: location.origin + location.pathname}).catch(x => ({error: x}));
     busy = false;
     if (r.error) return showForgot(isNet(r.error) ? 'ما في اتصال بالإنترنت. جرّب كمان مرة.' : r.error.status === 429 ? 'انبعت رابط من شوي. استنى شوي وجرّب كمان مرة.' : 'ما زبط الإرسال: ' + String(r.error.message || r.error));
     showForgot('إذا هاد إيميل المالك، وصلك هلأ رابط عليه. افتحه، وبيفتح البرنامج على شاشة بتختار فيها رقمك السري الجديد. إذا ما لقيته، شوف بالـ Junk أو Spam.', true);
   });
-  guard($('#fg_mail'), RULES.pin);
-  $('#fg_mail').focus();
+  guard($('#fg_user'), RULES.user); guard($('#fg_mail'), RULES.pin);
+  $('#fg_user').focus();
 }
 function err(m) { const e = $('#formErr'); if (e) { e.textContent = m; e.hidden = false; } }
 function setBusy(on, label) {
