@@ -19,7 +19,32 @@ const sb = window.supabase.createClient(CFG.url, CFG.key, {
 window.SAMBA_SB = sb;   // the program uses this same connection (one login per page)
 
 const $ = s => document.querySelector(s);
-const toLatin = v => String(v == null ? '' : v).replace(/[٠-٩۰-۹]/g, d => String(d.charCodeAt(0) - (d.charCodeAt(0) >= 0x6F0 ? 0x6F0 : 0x660)));
+// what can be typed in a box, as in every box of the program (fieldRule / fieldHint in reference/prototype.html): Arabic
+// digits are refused with the reference's message. The login PIN keeps letters: the owner's first password was set in
+// Supabase and may have them (a digits PIN is chosen right after such a login).
+const AR_ANY = /[٠-٩۰-۹٫٬]/, AR_MSG = 'الأرقام بالإنجليزي بس';
+const RULES = {
+  user: {re: /[A-Za-z0-9._-]/, msg: 'أحرف وأرقام إنجليزية، و«.» «_» «-» بس', lower: true},
+  pin: {re: /[^٠-٩۰-۹٫٬]/, msg: AR_MSG},
+  digits: {re: /[0-9]/, msg: 'الرقم السري أرقام إنجليزية بس'}
+};
+function fieldHint(t, msg) {
+  let h = document.getElementById('fhint');
+  if (!h) { h = document.createElement('div'); h.id = 'fhint'; h.setAttribute('role', 'status'); document.body.appendChild(h); }
+  const b = t.getBoundingClientRect(); h.textContent = msg; h.hidden = false;
+  h.style.top = Math.max(4, Math.min(innerHeight - 44, b.bottom + 4)) + 'px'; h.style.right = Math.max(8, innerWidth - b.right) + 'px';
+  clearTimeout(h._t); h._t = setTimeout(() => { h.hidden = true; }, 3200);
+}
+function guard(t, r) {
+  if (!t) return;
+  const clean = v => { const out = [...v].filter(c => r.re.test(c)).join(''); return {out: r.lower ? out.toLowerCase() : out, bad: out !== v}; };
+  t.addEventListener('input', () => { const v = t.value, c = clean(v); if (c.out !== v) { t.value = c.out; if (c.bad) fieldHint(t, AR_ANY.test(v) ? AR_MSG : r.msg); } });
+  t.addEventListener('paste', e => {
+    const tx = (e.clipboardData && e.clipboardData.getData('text')) || '';
+    if (tx && clean(tx).bad) { e.preventDefault(); fieldHint(t, AR_ANY.test(tx) ? 'ما انلصق: فيه أرقام عربية' : 'ما انلصق: ' + r.msg); }
+  });
+}
+const AR_BOX = 'في مربع فيه أرقام عربية. اكتبها بالإنجليزي.';
 const isNet = e => !!e && (e.name === 'AuthRetryableFetchError' || e.status === 0 || /Failed to fetch|NetworkError|Load failed|fetch failed|network|timeout/i.test(String(e.message || e)));
 const LS = {get: k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } }};
 const timeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
@@ -74,7 +99,7 @@ function showLogin(msg) {
   if (started) return;
   $('#app').innerHTML = loginHTML(msg);
   const f = $('#loginForm'); f.addEventListener('submit', onLogin);
-  const pin = $('#lg_pin'); pin.addEventListener('input', () => { const v = toLatin(pin.value); if (v !== pin.value) pin.value = v; });
+  guard($('#lg_pin'), RULES.pin); guard($('#lg_user'), RULES.user);
   const u = $('#lg_user'); if (u && !u.disabled && !('ontouchstart' in window)) u.focus();
   $('#lg_forgot').addEventListener('click', e => { e.preventDefault(); showForgot(); });
 }
@@ -100,6 +125,7 @@ function showForgot(msg, ok) {
     if (r.error) return showForgot(isNet(r.error) ? 'ما في اتصال بالإنترنت. جرّب كمان مرة.' : r.error.status === 429 ? 'انبعت رابط من شوي. استنى شوي وجرّب كمان مرة.' : 'ما زبط الإرسال: ' + String(r.error.message || r.error));
     showForgot('إذا هاد إيميل المالك، وصلك هلأ رابط عليه. افتحه، وبيفتح البرنامج على شاشة بتختار فيها رقمك السري الجديد. إذا ما لقيته، شوف بالـ Junk أو Spam.', true);
   });
+  guard($('#fg_mail'), RULES.pin);
   $('#fg_mail').focus();
 }
 function err(m) { const e = $('#formErr'); if (e) { e.textContent = m; e.hidden = false; } }
@@ -111,7 +137,8 @@ function setBusy(on, label) {
 async function onLogin(e) {
   e.preventDefault();
   if (busy || started) return;
-  const un = $('#lg_user').value.trim().toLowerCase(), pin = toLatin($('#lg_pin').value.trim());
+  const un = $('#lg_user').value.trim().toLowerCase(), pin = $('#lg_pin').value.trim();
+  if (AR_ANY.test(un) || AR_ANY.test(pin)) return err(AR_BOX);
   if (!un) return err('اكتب اسم الدخول.');
   if (!pin) return err('اكتب الرقم السري.');
   if (lockUntil && Date.now() < lockUntil) return;
@@ -161,10 +188,11 @@ function showNewPin(msg, why) {
   <form id="loginForm"><label>الرقم السري الجديد<input id="np_1" type="password" inputmode="numeric" dir="ltr" autocomplete="new-password"></label>
   <label>أعد كتابة الرقم الجديد<input id="np_2" type="password" inputmode="numeric" dir="ltr" autocomplete="new-password"></label>
   <div id="formErr" class="err" ${msg ? '' : 'hidden'}>${msg || ''}</div><button class="btn primary big">حفظ الرقم والدخول</button></form></div></div>`;
-  ['np_1', 'np_2'].forEach(id => { const x = $('#' + id); x.addEventListener('input', () => { const v = toLatin(x.value).replace(/\D/g, ''); if (v !== x.value) x.value = v; }); });
+  ['np_1', 'np_2'].forEach(id => guard($('#' + id), RULES.digits));
   $('#loginForm').addEventListener('submit', async e => {
     e.preventDefault(); if (busy) return;
     const a = $('#np_1').value.trim(), b2 = $('#np_2').value.trim();
+    if (AR_ANY.test(a) || AR_ANY.test(b2)) return err(AR_BOX);
     if (!/^\d{6,12}$/.test(a)) return err('الرقم السري أرقام إنجليزية بس، من 6 لـ 12 رقم.');
     if (a !== b2) return err('الرقم الجديد والتأكيد مش متطابقين.');
     setBusy(true, 'عم يحفظ…');
