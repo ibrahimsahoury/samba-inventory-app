@@ -175,7 +175,7 @@ async function onLogin(e) {
       sb.rpc('log_login_fail', {login: un}).then(() => {}, () => {});
       setBusy(false); fails++;
       if (fails >= 5) { fails = 0; lockUntil = Date.now() + 30000; showLogin(); setTimeout(() => showLogin(), 30500); return; }
-      return err('اسم الدخول أو الرقم السري غلط.');
+      return err(r1.data ? 'اسم الدخول أو الرقم السري غلط.' : 'ما إلك حساب بهالاسم. تأكد من اسم الدخول أو راجع المدير.');
     }
     const w = await sb.rpc('whoami');
     if (w.error) throw w.error;
